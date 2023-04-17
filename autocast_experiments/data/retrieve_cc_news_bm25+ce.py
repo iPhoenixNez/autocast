@@ -65,13 +65,13 @@ def save_results(
 
 
 def main():
+    '''
     parser = argparse.ArgumentParser(description='Arguments for BM25+CE retriever.')
     parser.add_argument('--beginning', type=str, required=True, help='startg retrieving on this date')
     parser.add_argument('--expiry', type=str, required=True, help='finish retrieving on this date')
     parser.add_argument('--n_docs', type=int, required=True, help='retrieve n daily articles for each question')
     parser.add_argument('--out_file', type=str, required=True, help='output file')
-    cfg = parser.parse_args()
-
+    cfg = parser.parse_args()'''
     # get questions & answers
     questions = []
     question_choices = []
@@ -82,9 +82,9 @@ def main():
 
     ds_key = 'autocast'
 
-    assert cfg.beginning and cfg.expiry
-    start_date = datetime.datetime.strptime(cfg.beginning, "%Y-%m-%d")
-    end_date = datetime.datetime.strptime(cfg.expiry, "%Y-%m-%d")
+    assert '2016-01-01' and '2022-04-12'
+    start_date = datetime.datetime.strptime('2016-01-01', "%Y-%m-%d")
+    end_date = datetime.datetime.strptime('2022-04-12', "%Y-%m-%d")
 
     def daterange(start_date, end_date):
         for n in range(int((end_date - start_date).days)):
@@ -92,8 +92,7 @@ def main():
     
     dates = [str(date.date()) for date in daterange(start_date, end_date)]
     date_to_question_idx = [[] for _ in dates]
-
-    autocast_questions = json.load(open('autocast_questions.json'))
+    autocast_questions = json.load(open('./autocast/autocast_questions.json'))
     autocast_questions = [q for q in autocast_questions if q['status'] == 'Resolved']
     for question_idx, ds_item in enumerate(autocast_questions):
         question = ds_item['question']
@@ -104,19 +103,32 @@ def main():
         expiry = ds_item['close_time']
 
         if ds_item['qtype'] != 'mc':
-            df = pd.DataFrame(ds_item['crowd'])
-            df['date'] = df['timestamp'].map(lambda x: x[:10])
-            crowd = df.groupby('date').mean().rename(columns={df.columns[1]: 'target'})
-            crowd_preds = crowd
+          df = pd.DataFrame(ds_item['crowd'])
+          df['date'] = df['timestamp'].map(lambda x: x[:10])
+          df = df.loc[:, ['date', 'forecast']]
+          df['date'] = pd.to_datetime(df['date'])
+          fst = df['forecast'].values.tolist()
+          for i in fst:
+              i = float(i)
+          df['forecast'] = fst
+          crowd = df.groupby('date')['forecast'].mean().reset_index().rename(columns={'forecast': 'target'})          
+          crowd_preds = crowd
         else:
-            df = pd.DataFrame(ds_item['crowd'])
-            df['date'] = df['timestamp'].map(lambda x: x[:10])
-            fs = np.array(df['forecast'].values.tolist())
-            for i in range(fs.shape[1]):
-                df[f'{i}'] = fs[:,i]
-            crowd = df.groupby('date').mean()
-            crowd_preds = crowd
-        
+          df = pd.DataFrame(ds_item['crowd'])
+          df['date'] = df['timestamp'].map(lambda x: x[:10])
+          df['date']= pd.to_datetime(df['date'])
+          forecast = df['forecast'].values.tolist()
+          mean_f = []
+          for j in range(len(forecast)):
+              sum = 0
+              for i in range(len(forecast[j])):
+                  sum+=forecast[j][i]
+              mean_forecast = sum/len(forecast[j])
+              mean_f.append(mean_forecast)
+          df["forecast"] = mean_f
+          crowd = df.groupby('date')['forecast'].mean().reset_index().rename(columns={'forecast': 'forecast'})
+          crowd_preds = crowd
+
         crowd_preds.drop(crowd_preds.tail(1).index, inplace=True) # avoid leakage
         crowd_preds['ctxs'] = None
         questions.append(question)
@@ -145,7 +157,7 @@ def main():
         cc_news_df_daily = cc_news_df[cc_news_df['date'] == date]
         if len(cc_news_df_daily) == 0: continue
 
-        k = min(cfg.n_docs, len(cc_news_df_daily))
+        k = min(10, len(cc_news_df_daily))
 
         ids = cc_news_df_daily['id'].values.tolist()
         titles = cc_news_df_daily['title'].values.tolist()
@@ -200,7 +212,6 @@ def main():
                 } 
                 for doc_id, score in top_k
             ]
-            # print(ctxs)
 
             question_idx = int(score_idx.split('_')[-1])
             question_targets[question_idx].at[date, 'ctxs'] = ctxs
@@ -217,8 +228,10 @@ def main():
         question_targets,
         question_ids,
         question_expiries,
-        cfg.out_file,
+        "autocast_cc_news_retrieved.json",
     )
 
 if __name__ == "__main__":
     main()
+
+    
